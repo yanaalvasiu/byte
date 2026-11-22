@@ -652,7 +652,7 @@ struct ContentView: View {
     // Page that is never rebuilt from one tab to the next (see Stage.swift).
     @ViewBuilder
     private var stage: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: .topTrailing) {
             if browser.prefs.splitView {
                 SplitStage(browser: browser, corner: cards ? Metrics.cardRadius : 0, immersed: fullscreenTab?.id)
             } else if let tab = browser.active {
@@ -698,7 +698,8 @@ struct ContentView: View {
 
             if let annotation = browser.annotating {
                 AnnotationPanel(browser: browser, annotation: annotation)
-                    .padding(.bottom, 18)
+                    .padding(.top, 18)
+                    .padding(.trailing, 18)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .zIndex(100)
             }
@@ -1644,6 +1645,11 @@ struct ContentView: View {
         guard !ShortcutStore.shared.recording else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let key = event.shortcutCharacters
+        if flags.isEmpty, event.charactersIgnoringModifiers?.lowercased() == "c",
+           let annotation = browser.annotating, !annotation.commenting {
+            browser.commentOnAnnotation()
+            return true
+        }
         // ⌃Tab, or the key Settings › Shortcuts gave the switcher instead,
         // and whether ⇧ sends it back.
         let recent = ShortcutStore.shared.recentSwitch(event)

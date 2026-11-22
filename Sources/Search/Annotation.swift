@@ -53,8 +53,10 @@ final class Annotation: ObservableObject, Identifiable {
     @Published var note = ""
     @Published var marks: [AnnotationStroke] = []
     @Published var tool: AnnotationTool = .cursor
+    @Published var commenting = false
     private weak var web: WKWebView?
     private var pickerTimer: Timer?
+    private var pickerRequestInFlight = false
 
     init(tab: Tab) {
         tabID = tab.id
@@ -74,6 +76,9 @@ final class Annotation: ObservableObject, Identifiable {
 
     func undo() { _ = marks.popLast() }
 
+    func beginComment() { commenting = true }
+    func endComment() { commenting = false }
+
     func selectTool(_ tool: AnnotationTool) {
         self.tool = tool
         if tool == .cursor, let web { installPicker(on: web) }
@@ -88,11 +93,14 @@ final class Annotation: ObservableObject, Identifiable {
         self.web = web
         web.evaluateJavaScript(Self.installPickerScript)
         pickerTimer?.invalidate()
-        pickerTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self, weak web] _ in
-            web?.evaluateJavaScript("window.__byteAnnotationPick || null") { value, _ in
-                guard let result = value as? [String: Any], !result.isEmpty else { return }
+        pickerTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self, weak web] _ in
+            guard let self, !self.pickerRequestInFlight else { return }
+            self.pickerRequestInFlight = true
+            guard let web else { self.pickerRequestInFlight = false; return }
+            web.evaluateJavaScript("window.__byteAnnotationPick || null") { value, _ in
                 Task { @MainActor in
-                    guard let self else { return }
+                    self.pickerRequestInFlight = false
+                    guard let result = value as? [String: Any], !result.isEmpty else { return }
                     self.elementLabel = result["label"] as? String ?? ""
                     self.elementSelector = result["selector"] as? String ?? ""
                     self.selectedText = result["text"] as? String ?? ""
@@ -234,7 +242,16 @@ extension Browser {
 
     func closeAnnotation() {
         annotating?.stopPicker()
+        annotating?.endComment()
         annotating = nil
+    }
+
+    func commentOnAnnotation() {
+        guard let annotation = annotating, !annotation.elementLabel.isEmpty else {
+            announce("Select an element first")
+            return
+        }
+        annotation.beginComment()
     }
 
     func copyAnnotation() {
@@ -280,39 +297,79 @@ struct AnnotationPanel: View {
     @ObservedObject var annotation: Annotation
 
     var body: some View {
-        HStack(spacing: 2) {
+        Group {
+            if annotation.commenting {
+                commentCard
+            } else {
+                toolbar
+            }
+        }
+    }
+
+    private var toolbar: some View {
+        VStack(spacing: 3) {
             toolButton(.cursor, help: "Pick element")
+            dockButton("text.bubble", help: "Comment on selected element   C", active: annotation.commenting) {
+                browser.commentOnAnnotation()
+            }
             toolButton(.pen, help: "Draw")
             toolButton(.rectangle, help: "Rectangle")
             toolButton(.text, help: "Add comment")
-            Divider().frame(height: 20).padding(.horizontal, 4)
-            Button { browser.copyAnnotation() } label: {
-                Image(systemName: "doc.on.doc")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .help("Copy annotation comment")
-            Button { browser.closeAnnotation() } label: {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .help("Close annotation")
+            Divider().frame(width: 22).padding(.vertical, 2)
+            dockButton("doc.on.doc", help: "Copy annotation comment") { browser.copyAnnotation() }
+            dockButton("xmark", help: "Close annotation") { browser.closeAnnotation() }
         }
         .font(.system(size: 13, weight: .medium))
-        .padding(6)
-        .background(Color.black.opacity(0.9), in: Capsule())
-        .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 14, y: 5)
+        .padding(7)
+        .background(Color.white.opacity(0.97), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.black.opacity(0.12), lineWidth: 1))
+        .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
         .accessibilityLabel(annotation.elementLabel.isEmpty ? "Annotation tools" : annotation.elementLabel)
     }
 
+    private var commentCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Leave a comment on this element…", text: $annotation.note)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+            Text(annotation.elementLabel.isEmpty ? "Select an element first" : annotation.elementLabel)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            HStack(spacing: 7) {
+                Button("Copy") { browser.copyAnnotation(); annotation.endComment() }
+                Button("ChatGPT") { browser.sendAnnotation(to: .codex) }
+                Button("Claude") { browser.sendAnnotation(to: .claude) }
+                Spacer()
+                Button { annotation.endComment() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(width: 300)
+        .background(Color.white.opacity(0.98), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.black.opacity(0.12), lineWidth: 1))
+        .shadow(color: .black.opacity(0.22), radius: 16, y: 5)
+    }
+
     private func toolButton(_ tool: AnnotationTool, help: String) -> some View {
-        Button { annotation.selectTool(tool) } label: {
-            Image(systemName: tool.icon)
-                .frame(width: 25, height: 25)
-                .background(annotation.tool == tool ? Color.accentColor : .clear, in: Circle())
-                .foregroundStyle(annotation.tool == tool ? .white : .white.opacity(0.88))
+        dockButton(tool.icon, help: help, active: annotation.tool == tool) { annotation.selectTool(tool) }
+    }
+
+    private func dockButton(_ icon: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(active ? Color.accentColor : .clear)
+                    .frame(width: 5, height: 5)
+                Image(systemName: icon)
+                    .frame(width: 23, height: 24)
+                    .foregroundStyle(active ? Color.accentColor : Color.black.opacity(0.72))
+            }
+            .frame(width: 34, height: 25)
         }
         .buttonStyle(.plain)
         .help(help)
