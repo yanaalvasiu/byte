@@ -10,12 +10,12 @@ It is based on the open-source Search browser and keeps its WebKit foundation, d
 - `⌥⌘I` opens Web Inspector
 - `⌥⌘J` opens the JavaScript console
 - `⌥⌘C` inspects an element
-- `⇧⌘A` opens page annotation
+- `⇧⌘A` opens visual page annotation
 - `⇧⌘1` copies annotation context for Claude
 - `⇧⌘2` copies annotation context for Codex
 - `Esc` closes the annotation panel
 
-Annotation context includes the current page, URL, selected text, and your note. Byte copies that context to the clipboard and opens the selected assistant so you can paste it into your development conversation.
+Annotation comments capture the current page as an image and let you draw with a pen, highlighter, rectangle, or arrow. Add a note, then use **Copy comment** to place the marked image and page context on the clipboard. The Claude and Codex actions do the same copy and open the selected agent, ready for you to paste the comment into your development conversation.
 
 ## Build
 
