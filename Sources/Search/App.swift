@@ -652,7 +652,7 @@ struct ContentView: View {
     // Page that is never rebuilt from one tab to the next (see Stage.swift).
     @ViewBuilder
     private var stage: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .bottom) {
             if browser.prefs.splitView {
                 SplitStage(browser: browser, corner: cards ? Metrics.cardRadius : 0, immersed: fullscreenTab?.id)
             } else if let tab = browser.active {
@@ -698,8 +698,7 @@ struct ContentView: View {
 
             if let annotation = browser.annotating {
                 AnnotationPanel(browser: browser, annotation: annotation)
-                    .padding(.top, browser.finding ? 64 : 14)
-                    .padding(.trailing, 14)
+                    .padding(.bottom, 18)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .zIndex(100)
             }

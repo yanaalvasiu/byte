@@ -3,26 +3,32 @@ import SwiftUI
 import WebKit
 
 enum AnnotationTool: String, CaseIterable {
+    case cursor
     case pen
     case highlight
     case rectangle
     case arrow
+    case text
 
     var label: String {
         switch self {
+        case .cursor: return "Cursor"
         case .pen: return "Pen"
         case .highlight: return "Highlight"
         case .rectangle: return "Rectangle"
         case .arrow: return "Arrow"
+        case .text: return "Text"
         }
     }
 
     var icon: String {
         switch self {
+        case .cursor: return "cursorarrow"
         case .pen: return "pencil"
         case .highlight: return "highlighter"
         case .rectangle: return "rectangle"
         case .arrow: return "arrow.up.right"
+        case .text: return "textformat"
         }
     }
 }
@@ -42,9 +48,13 @@ final class Annotation: ObservableObject, Identifiable {
     let address: String
     @Published var screenshot: NSImage?
     @Published var selectedText = ""
+    @Published var elementLabel = ""
+    @Published var elementSelector = ""
     @Published var note = ""
     @Published var marks: [AnnotationStroke] = []
-    @Published var tool: AnnotationTool = .pen
+    @Published var tool: AnnotationTool = .cursor
+    private weak var web: WKWebView?
+    private var pickerTimer: Timer?
 
     init(tab: Tab) {
         tabID = tab.id
@@ -64,9 +74,84 @@ final class Annotation: ObservableObject, Identifiable {
 
     func undo() { _ = marks.popLast() }
 
-    func commentText() -> String {
-        "BYTE ANNOTATION COMMENT\nPAGE: \(title)\nURL: \(address)\nSELECTED TEXT:\n\(selectedText)\nNOTE:\n\(note)\n"
+    func selectTool(_ tool: AnnotationTool) {
+        self.tool = tool
+        if tool == .cursor, let web { installPicker(on: web) }
+        else { pickerTimer?.invalidate(); pickerTimer = nil; web?.evaluateJavaScript(Self.removePickerScript) }
     }
+
+    func commentText() -> String {
+        "BYTE ANNOTATION COMMENT\nPAGE: \(title)\nURL: \(address)\nELEMENT: \(elementLabel)\nSELECTOR: \(elementSelector)\nSELECTED TEXT:\n\(selectedText)\nNOTE:\n\(note)\n"
+    }
+
+    func installPicker(on web: WKWebView) {
+        self.web = web
+        web.evaluateJavaScript(Self.installPickerScript)
+        pickerTimer?.invalidate()
+        pickerTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self, weak web] _ in
+            web?.evaluateJavaScript("window.__byteAnnotationPick || null") { value, _ in
+                guard let result = value as? [String: Any], !result.isEmpty else { return }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.elementLabel = result["label"] as? String ?? ""
+                    self.elementSelector = result["selector"] as? String ?? ""
+                    self.selectedText = result["text"] as? String ?? ""
+                    self.stopPicker()
+                }
+            }
+        }
+    }
+
+    func stopPicker() {
+        pickerTimer?.invalidate()
+        pickerTimer = nil
+        web?.evaluateJavaScript(Self.removePickerScript)
+    }
+
+    static let installPickerScript = """
+    (() => {
+      if (window.__byteAnnotationPicker) return "ready";
+      const state = { current: null, outline: "", pick: null };
+      const overlay = document.createElement("div");
+      overlay.id = "byte-annotation-picker";
+      Object.assign(overlay.style, { position: "fixed", inset: "0", zIndex: "2147483646", pointerEvents: "none" });
+      const label = document.createElement("div");
+      Object.assign(label.style, { position: "fixed", display: "none", padding: "2px 5px", borderRadius: "3px", background: "#2477e8", color: "white", font: "600 12px -apple-system,BlinkMacSystemFont,sans-serif", boxShadow: "0 1px 4px #0004" });
+      overlay.appendChild(label); document.documentElement.appendChild(overlay);
+      function name(node) {
+        const tag = node.tagName.toLowerCase();
+        const classes = [...node.classList].slice(0, 2).map(c => "." + c.replace(/[^a-zA-Z0-9_-]/g, "")).join("");
+        return tag + classes;
+      }
+      function move(event) {
+        const node = document.elementFromPoint(event.clientX, event.clientY);
+        if (!node || node === overlay || overlay.contains(node)) return;
+        if (state.current) state.current.style.outline = state.outline;
+        state.current = node; state.outline = node.style.outline;
+        node.style.outline = "2px solid #2477e8";
+        const rect = node.getBoundingClientRect();
+        label.textContent = name(node); label.style.display = "block";
+        label.style.left = Math.max(4, rect.left) + "px"; label.style.top = Math.max(4, rect.top - 22) + "px";
+      }
+      function click(event) {
+        const node = state.current || document.elementFromPoint(event.clientX, event.clientY);
+        if (!node || node === overlay || overlay.contains(node)) return;
+        event.preventDefault(); event.stopPropagation();
+        state.pick = { label: name(node), selector: name(node), text: (node.innerText || node.textContent || "").trim().slice(0, 1000) };
+        window.__byteAnnotationPick = state.pick;
+      }
+      document.addEventListener("mousemove", move, true);
+      document.addEventListener("click", click, true);
+      window.__byteAnnotationPicker = { overlay, state, move, click };
+      return "ready";
+    })()
+    """
+
+    static let removePickerScript = """
+    (() => { const p = window.__byteAnnotationPicker; if (!p) return "gone"; if (p.state.current) p.state.current.style.outline = p.state.outline; document.removeEventListener("mousemove", p.move, true); document.removeEventListener("click", p.click, true); p.overlay.remove(); delete window.__byteAnnotationPicker; delete window.__byteAnnotationPick; return "gone"; })()
+    """
+
+    deinit { pickerTimer?.invalidate() }
 
     func renderedImage() -> NSImage? {
         guard let screenshot else { return nil }
@@ -134,6 +219,7 @@ extension Browser {
         let annotation = Annotation(tab: tab)
         annotating = annotation
         announce("Annotation ready")
+        annotation.installPicker(on: web)
         let configuration = WKSnapshotConfiguration()
         configuration.afterScreenUpdates = true
         web.takeSnapshot(with: configuration) { image, _ in
@@ -146,7 +232,10 @@ extension Browser {
         }
     }
 
-    func closeAnnotation() { annotating = nil }
+    func closeAnnotation() {
+        annotating?.stopPicker()
+        annotating = nil
+    }
 
     func copyAnnotation() {
         guard let annotation = annotating else { return }
@@ -191,72 +280,43 @@ struct AnnotationPanel: View {
     @ObservedObject var annotation: Annotation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "highlighter")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Palette.muted)
-                Text("Annotate comment")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.ink)
-                Spacer()
-                Text("⇧⌘A")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Palette.muted)
-                Door(icon: "xmark", help: "Close   esc") { browser.closeAnnotation() }
+        HStack(spacing: 2) {
+            toolButton(.cursor, help: "Pick element")
+            toolButton(.pen, help: "Draw")
+            toolButton(.rectangle, help: "Rectangle")
+            toolButton(.text, help: "Add comment")
+            Divider().frame(height: 20).padding(.horizontal, 4)
+            Button { browser.copyAnnotation() } label: {
+                Image(systemName: "doc.on.doc")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-
-            if annotation.screenshot != nil {
-                AnnotationCanvas(annotation: annotation)
-                    .frame(width: 880, height: 500)
-                    .padding(.horizontal, 12)
-            } else {
-                ProgressView().frame(width: 880, height: 180)
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .help("Copy annotation comment")
+            Button { browser.closeAnnotation() } label: {
+                Image(systemName: "xmark")
             }
-
-            HStack(spacing: 6) {
-                ForEach(AnnotationTool.allCases, id: \.self) { tool in
-                    Button {
-                        annotation.tool = tool
-                    } label: {
-                        Label(tool.label, systemImage: tool.icon)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(annotation.tool == tool ? Palette.ink : Palette.muted)
-                }
-                Spacer()
-                Button("Undo") { annotation.undo() }
-                    .keyboardShortcut("z", modifiers: .command)
-                Button("Copy comment") { browser.copyAnnotation() }
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
-            }
-            .controlSize(.small)
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-
-            TextEditor(text: $annotation.note)
-                .font(.system(size: 12))
-                .frame(minHeight: 54, maxHeight: 90)
-                .scrollContentBackground(.hidden)
-                .padding(4)
-                .background(Palette.frame, in: RoundedRectangle(cornerRadius: 7))
-                .padding(14)
-
-            HStack(spacing: 8) {
-                Button("Claude  ⇧⌘1") { browser.sendAnnotation(to: .claude) }
-                Button("Codex  ⇧⌘2") { browser.sendAnnotation(to: .codex) }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .padding(.horizontal, 14)
-            .padding(.bottom, 14)
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .help("Close annotation")
         }
-        .frame(width: 920, height: 650)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
+        .font(.system(size: 13, weight: .medium))
+        .padding(6)
+        .background(Color.black.opacity(0.9), in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 14, y: 5)
+        .accessibilityLabel(annotation.elementLabel.isEmpty ? "Annotation tools" : annotation.elementLabel)
+    }
+
+    private func toolButton(_ tool: AnnotationTool, help: String) -> some View {
+        Button { annotation.selectTool(tool) } label: {
+            Image(systemName: tool.icon)
+                .frame(width: 25, height: 25)
+                .background(annotation.tool == tool ? Color.accentColor : .clear, in: Circle())
+                .foregroundStyle(annotation.tool == tool ? .white : .white.opacity(0.88))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

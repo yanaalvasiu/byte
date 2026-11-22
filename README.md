@@ -15,7 +15,7 @@ It is based on the open-source Search browser and keeps its WebKit foundation, d
 - `⇧⌘2` copies annotation context for Codex
 - `Esc` closes the annotation panel
 
-Annotation comments capture the current page as an image and let you draw with a pen, highlighter, rectangle, or arrow. Add a note, then use **Copy comment** to place the marked image and page context on the clipboard. The Claude and Codex actions do the same copy and open the selected agent, ready for you to paste the comment into your development conversation.
+Annotation starts in element-picker mode. Move over the live page to highlight a DOM node and show its tag/class label, then click it to attach that target to the comment. The compact bottom dock keeps the cursor active in blue and exposes drawing/text tools beside it. Copying the comment places the marked image, selected element, URL, and note on the clipboard. The Claude and Codex actions do the same copy and open the selected agent, ready for you to paste the comment into your development conversation.
 
 ## Build
 
