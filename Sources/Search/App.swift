@@ -652,57 +652,59 @@ struct ContentView: View {
     // Page that is never rebuilt from one tab to the next (see Stage.swift).
     @ViewBuilder
     private var stage: some View {
-        if browser.prefs.splitView {
-            SplitStage(browser: browser, corner: cards ? Metrics.cardRadius : 0, immersed: fullscreenTab?.id)
-        } else if let tab = browser.active {
-            Page(tab: tab, corner: cards ? Metrics.cardRadius : 0, browser: browser)
-                .overlay {
-                    if browser.prefs.showsLinks { LinkBubble(status: browser.linkStatus) }
-                }
-                .overlay(alignment: .topTrailing) {
-                    if browser.finding {
-                        FindBar(browser: browser)
-                            .transition(.move(edge: .top).combined(with: .opacity))
+        ZStack(alignment: .topTrailing) {
+            if browser.prefs.splitView {
+                SplitStage(browser: browser, corner: cards ? Metrics.cardRadius : 0, immersed: fullscreenTab?.id)
+            } else if let tab = browser.active {
+                Page(tab: tab, corner: cards ? Metrics.cardRadius : 0, browser: browser)
+                    .overlay {
+                        if browser.prefs.showsLinks { LinkBubble(status: browser.linkStatus) }
                     }
-                }
-                .overlay(alignment: .topTrailing) {
-                    if let assistant = browser.assisting, assistant.tab == tab.id {
-                        AssistantPanel(browser: browser, assistant: assistant)
-                            .padding(.top, browser.finding ? 64 : 14)
-                            .padding(.trailing, 14)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .overlay(alignment: .topTrailing) {
+                        if browser.finding {
+                            FindBar(browser: browser)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
                     }
-                }
-                .animation(Motion.settle, value: browser.assisting?.id)
-                .overlay(alignment: .topTrailing) {
-                    if let annotation = browser.annotating, annotation.tabID == tab.id {
-                        AnnotationPanel(browser: browser, annotation: annotation)
-                            .padding(.top, browser.finding ? 64 : 14)
-                            .padding(.trailing, 14)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .overlay(alignment: .topTrailing) {
+                        if let assistant = browser.assisting, assistant.tab == tab.id {
+                            AssistantPanel(browser: browser, assistant: assistant)
+                                .padding(.top, browser.finding ? 64 : 14)
+                                .padding(.trailing, 14)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
                     }
-                }
-                .animation(Motion.settle, value: browser.annotating?.id)
-                .overlay(alignment: .topLeading) {
-                    if let asked = browser.suggesting, asked.tab == tab.id {
-                        AccountList(browser: browser, asked: asked)
-                            .transition(.opacity)
+                    .animation(Motion.settle, value: browser.assisting?.id)
+                    .overlay(alignment: .topLeading) {
+                        if let asked = browser.suggesting, asked.tab == tab.id {
+                            AccountList(browser: browser, asked: asked)
+                                .transition(.opacity)
+                        }
                     }
-                }
-                .animation(Motion.quick, value: browser.suggesting)
-                .overlay(alignment: .topLeading) {
-                    if let pairing = browser.applePairing, pairing.tab == tab.id {
-                        ApplePairingCard(browser: browser, apple: browser.applePasswords, pairing: pairing)
-                            .transition(.opacity)
+                    .animation(Motion.quick, value: browser.suggesting)
+                    .overlay(alignment: .topLeading) {
+                        if let pairing = browser.applePairing, pairing.tab == tab.id {
+                            ApplePairingCard(browser: browser, apple: browser.applePasswords, pairing: pairing)
+                                .transition(.opacity)
+                        }
                     }
-                }
-                .animation(Motion.quick, value: browser.applePairing)
-        } else if browser.prefs.homeTheme != .off {
-            HomeBackground(theme: browser.prefs.homeTheme, tuning: browser.prefs.homeTuning,
-                           image: browser.prefs.homeThemeImage, shuffle: browser.prefs.homeShuffle)
-        } else {
-            Palette.ground
+                    .animation(Motion.quick, value: browser.applePairing)
+            } else if browser.prefs.homeTheme != .off {
+                HomeBackground(theme: browser.prefs.homeTheme, tuning: browser.prefs.homeTuning,
+                               image: browser.prefs.homeThemeImage, shuffle: browser.prefs.homeShuffle)
+            } else {
+                Palette.ground
+            }
+
+            if let annotation = browser.annotating {
+                AnnotationPanel(browser: browser, annotation: annotation)
+                    .padding(.top, 18)
+                    .padding(.trailing, 18)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .zIndex(100)
+            }
         }
+        .animation(Motion.settle, value: browser.annotating?.id)
     }
 
     /// What the column and the strip take from the page right now: animated
@@ -1643,6 +1645,11 @@ struct ContentView: View {
         guard !ShortcutStore.shared.recording else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let key = event.shortcutCharacters
+        if flags.isEmpty, event.charactersIgnoringModifiers?.lowercased() == "c",
+           let annotation = browser.annotating, !annotation.commenting {
+            browser.commentOnAnnotation()
+            return true
+        }
         // ⌃Tab, or the key Settings › Shortcuts gave the switcher instead,
         // and whether ⇧ sends it back.
         let recent = ShortcutStore.shared.recentSwitch(event)
@@ -1707,6 +1714,10 @@ struct ContentView: View {
             if browser.makingSpace {
                 browser.cancelSpaceCreation()
                 withAnimation(Motion.glide) { browser.makingSpace = false }
+                return true
+            }
+            if browser.annotating != nil {
+                browser.closeAnnotation()
                 return true
             }
             // The same panels in the same order as ⌘W (Browser.closeFront).
