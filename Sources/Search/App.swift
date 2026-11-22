@@ -1716,6 +1716,10 @@ struct ContentView: View {
                 withAnimation(Motion.glide) { browser.makingSpace = false }
                 return true
             }
+            if browser.annotating != nil {
+                browser.closeAnnotation()
+                return true
+            }
             // The same panels in the same order as ⌘W (Browser.closeFront).
             if browser.closePanel() { return true }
             if browser.suggesting != nil {
