@@ -48,6 +48,10 @@ Byte is intended for local development work. It does not add telemetry. Page con
 
 Byte is an active personal development tool. It is not a general-purpose browser replacement.
 
+## Development workflow
+
+Build locally, test the exact interaction you are changing, and keep the app focused on the page under test. Releases and pushes are intentionally manual.
+
 ## License
 
 See [LICENSE](LICENSE) for the upstream license and attribution.
